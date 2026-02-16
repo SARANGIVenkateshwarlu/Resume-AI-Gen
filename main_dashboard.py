@@ -24,7 +24,7 @@ st.sidebar.image(logo,width=80)
 
 st.sidebar.markdown("**Resume Genie**")
 
-XAI_API_KEY = "API_KEY"
+XAI_API_KEY = "XAI_API_KEY"
 os.environ["XAI_API_KEY"] = XAI_API_KEY
 XAI_API_KEY = os.getenv("XAI_API_KEY") or st.secrets.get("XAI_API_KEY", "")
 if not XAI_API_KEY:
