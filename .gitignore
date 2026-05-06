@@ -1,1 +1,7 @@
 venv/
+outputs/
+.env
+logo/
+data/
+-__pycache__/
+*.pyc

@@ -1,0 +1,71 @@
+{
+  "job_boards": {
+    "linkedin": {
+      "name": "LinkedIn",
+      "selectors": {
+        "title": "h1.top-card-layout__title, h1.topcard__title, h1.jobs-unified-top-card__job-title",
+        "company": "a.topcard__org-name-link, span.topcard__flavor, span.jobs-unified-top-card__company-name",
+        "description": "div.description__text, div.show-more-less-html__markup, div.jobs-description__content",
+        "location": "span.topcard__flavor--bullet, span.jobs-unified-top-card__bullet"
+      },
+      "headers": {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+    },
+    "indeed": {
+      "name": "Indeed",
+      "selectors": {
+        "title": "h1.jobsearch-JobInfoHeader-title, h1.icl-u-xs-mb--xs",
+        "company": "div.jobsearch-InlineCompanyRating > div:first-child, div.icl-u-lg-mr--sm",
+        "description": "div#jobDescriptionText, div.jobsearch-jobDescriptionText",
+        "location": "div.jobsearch-JobInfoHeader-subtitle > div:last-child"
+      },
+      "headers": {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+    },
+    "glassdoor": {
+      "name": "Glassdoor",
+      "selectors": {
+        "title": "h1.job-title, div.JobDetails_jobTitle__",
+        "company": "div.employer-name, div.EmployerProfile_employerName__",
+        "description": "div.jobDescriptionContent, div.JobDetails_jobDescription__",
+        "location": "div.location, div.JobDetails_location__"
+      },
+      "headers": {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+    },
+    "greenhouse": {
+      "name": "Greenhouse",
+      "selectors": {
+        "title": "h1.app-title, h1#job-title",
+        "company": "span.company-name, a#company-name",
+        "description": "div#content, div.job-description, div#job-description",
+        "location": "div.location, span.location"
+      },
+      "headers": {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+    },
+    "lever": {
+      "name": "Lever",
+      "selectors": {
+        "title": "h2.posting-headline, h1.posting-title",
+        "company": "div.main-header-logo, div.posting-categories",
+        "description": "div.section-wrapper, div.posting-page, div#job-description",
+        "location": "div.location, div.workplace-types"
+      },
+      "headers": {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+    },
+    "generic": {
+      "name": "Generic (Auto-detect)",
+      "selectors": {
+        "title": "h1, [data-automation='job-title'], .job-title, [class*='title']",
+        "company": "[data-automation='company-name'], .company-name, .employer, [class*='company']",
+        "description": "[data-automation='job-description'], .job-description, .description, #job-description, article",
+        "location": "[data-automation='location'], .location, [class*='location']"
+      },
+      "headers": {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+    }
+  },
+  "settings": {
+    "request_timeout": 15,
+    "retry_count": 2,
+    "retry_delay": 2,
+    "max_jd_length": 8000,
+    "delay_between_requests": 1.0
+  }
+}

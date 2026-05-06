@@ -8,10 +8,8 @@ from PIL import Image
 
 from config import PROVIDER_CONFIG, TOKEN_BUDGETS, STEP_NAMES, CANDIDATE_RULES, INPUT_COST_PER_1M, OUTPUT_COST_PER_1M, GOOGLE_SCOPES, USERNAME, get_job_title
 from dummy_data import DUMMY_PREFIX, DUMMY_JD_DECODER, DUMMY_CV_TAILOR, DUMMY_BULLETS, DUMMY_COVER_LETTER, DUMMY_ROLE_FIT, DUMMY_ATS, DUMMY_MATCHER, DUMMY_INTERVIEW_Q, DUMMY_STAR, DUMMY_RECRUITER, DUMMY_FULL_PACKAGE, DUMMY_GENERIC
-from utils import extract_resume_text, generate_docx, generate_docx_cover_letter, generate_pdf, estimate_tokens, estimate_cost, create_run_folder, save_run_file, show_folder_summary, cl_filename, cv_filename, is_valid_resume_text
+from utils import extract_resume_text, generate_docx, generate_docx_cover_letter, generate_pdf, estimate_tokens, estimate_cost, create_run_folder, save_run_file, show_folder_summary, cl_filename, cv_filename
 from google_module import google_auth, get_or_create_sheet, add_job_application, get_all_applications, check_duplicate
-from scraper.scraper import scrape_batch
-from scraper.sheet_handler import get_google_service, push_batch_to_sheet, create_scraper_sheet
 from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
 
 SCOPES = GOOGLE_SCOPES
@@ -23,11 +21,8 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-try:
-    logo = Image.open("logo.png")
-    st.sidebar.image(logo, width=80)
-except Exception:
-    pass
+logo = Image.open("logo.png")
+st.sidebar.image(logo, width=80)
 st.sidebar.markdown("**Resume Genie**")
 
 ALL_KEYS = {}
@@ -308,7 +303,6 @@ tool = st.sidebar.radio(
         "12. Job Tracker",
         "Career Coach Chat",
         "JSON CV Mapper",
-        "Bulk JD Scraper",
     ],
     index=0,
     horizontal=False
@@ -382,9 +376,6 @@ if tool == "0. AUTO-PILOT (Run All Steps)":
                  use_container_width=True):
         cv_text = extract_resume_text(cv_file)
         st.session_state.shared_resume_text = cv_text
-        if not is_valid_resume_text(cv_text):
-            st.error(":warning: Could not extract text from CV. Try uploading as .md, .txt, or .typ format.")
-            st.stop()
         run_folder = create_run_folder(f"AutoPilot_{re.sub(r'[^a-zA-Z0-9_-]','_',jd_text[:40])}")
         all_results = {}
         all_saved = []
@@ -431,7 +422,7 @@ Rows: Core Responsibilities, Required Skills, Nice-to-Have Skills, ATS Keywords,
 
         # ── Step 2: CV Tailor ──
         r2 = run_step(2, "cv_tailor", lambda: f"""{CANDIDATE_RULES}
-Rewrite this FULL CV for the job. DO NOT invent facts. Preserve 60% verbatim, 60% flexible on Capstone.
+Rewrite this FULL CV for the job. DO NOT invent facts. Preserve 90% verbatim, 50% flexible on Capstone.
 IMPORTANT: Output the COMPLETE CV - include ALL experience roles, ALL bullet points, skills, education, and contact info. Do NOT truncate.
 - Rewrite summary to align with JD keywords
 - Reorder bullets so JD-matching content appears first
@@ -976,9 +967,6 @@ elif tool == "2. CV Tailor":
             st.warning("Please paste a job description.")
         elif not st.session_state.shared_resume_text:
             st.warning("Please upload your resume.")
-        elif not is_valid_resume_text(st.session_state.shared_resume_text):
-            st.error(":warning: Could not extract text from this PDF. Try uploading as .md, .txt, or .typ format.")
-            st.info("Scanned/image-based PDFs cannot be read. Use a text-based format instead.")
         else:
             with st.spinner("Tailoring your CV..."):
                 st.session_state.current_tool_key = "cv_tailor"
@@ -996,7 +984,7 @@ elif tool == "2. CV Tailor":
                     "3. Rephrase bullets to use strong action verbs and include JD keywords naturally\n"
                     "4. Update the skills section -- prioritize JD-matching skills, then add related skills\n"
                     "5. Add a \"Key Qualifications\" or \"Core Competencies\" section at the top\n"
-                    "6. Preserve 60% of original content — adjust 40% for ATS alignment and relevance\n"
+                    "6. Maintain 90% of the original resume content -- only adjust for relevance and impact\n"
                     "7. Use strong action verbs (Led, Built, Delivered, Architected, Optimized, etc.)\n"
                     "8. Add [ADD METRIC] placeholders where specific numbers are unavailable\n"
                     "9. NEVER invent new projects, company names, job titles, or metrics\n"
@@ -1782,21 +1770,15 @@ elif tool == "12. Job Tracker":
         st.markdown("""
         1. Create a Google Cloud project
         2. Enable Google Sheets API
-        3. Create credentials (Service Account or OAuth Client ID)
+        3. Create a Service Account
         4. Download the JSON key
-        5. For Service Account: share your sheet with the service account email
+        5. Share your sheet with the service account email
         """)
 
         creds_file = st.file_uploader(
-            "Upload Google Credentials JSON",
+            "Upload Google Service Account JSON",
             type=["json"],
             key="gsheets_creds"
-        )
-
-        existing_sheet_id = st.text_input(
-            "Or enter existing Sheet ID (optional)",
-            placeholder="1a2B3c4D5e... from sheet URL",
-            key="gs_existing_sheet"
         )
 
         if creds_file and st.button(":link: Connect to Google Sheets", key="btn_connect_gs"):
@@ -1805,15 +1787,11 @@ elif tool == "12. Job Tracker":
                     credentials_json = creds_file.read().decode("utf-8")
                     service = google_auth(credentials_json)
                     if service:
-                        if existing_sheet_id.strip():
-                            sheet_id = existing_sheet_id.strip()
-                            st.success(f":white_check_mark: Connected to existing sheet: `{sheet_id}`")
-                        else:
-                            sheet_id = get_or_create_sheet(service)
-                            st.success(f":white_check_mark: New sheet created: `{sheet_id}`")
+                        sheet_id = get_or_create_sheet(service)
                         st.session_state.gsheet_service = service
                         st.session_state.gsheet_id = sheet_id
-                        st.info(f"Open: https://docs.google.com/spreadsheets/d/{sheet_id}")
+                        st.success(f":white_check_mark: Connected! Sheet ID: `{sheet_id}`")
+                        st.info("Share this sheet with your service account email for viewing.")
                 except Exception as e:
                     st.error(f"Connection failed: {e}")
 
@@ -1913,10 +1891,7 @@ elif tool == "Career Coach Chat":
     if uploaded_file:
         resume_text = extract_resume_text(uploaded_file)
         st.session_state.shared_resume_text = resume_text
-        if is_valid_resume_text(resume_text):
-            st.success(f":white_check_mark: Resume loaded ({len(resume_text):,} chars)")
-        else:
-            st.error(":warning: Could not extract text. Try .md, .txt, or .typ format.")
+        st.success(f":white_check_mark: Resume loaded ({len(resume_text):,} chars)")
 
     if not st.session_state.shared_resume_text:
         st.warning(":point_up: Upload your resume to start chatting!")
@@ -2118,136 +2093,6 @@ Output ONLY the JSON object. No markdown fences."""
         st.info(":point_up: Paste your raw CV text above and click Generate to create structured JSON.")
 
 
-elif tool == "Bulk JD Scraper":
-    st.header(":globe_with_meridians: Bulk JD Scraper — Phase 5")
-    st.markdown("Paste multiple job description URLs. The scraper extracts Job Title, Company, and JD text from each, then pushes results to Google Sheets.")
-    st.markdown("---")
-
-    col1, col2 = st.columns([2, 1])
-    with col1:
-        st.subheader(":link: Job Description URLs")
-        urls_text = st.text_area(
-            "Paste URLs (one per line or comma-separated)",
-            height=200,
-            key="scraper_urls",
-            placeholder="https://www.linkedin.com/jobs/view/12345\nhttps://www.indeed.com/viewjob?jk=abc123\nhttps://boards.greenhouse.io/company/jobs/7890"
-        )
-    with col2:
-        st.subheader(":gear: Settings")
-        st.caption("Supported boards: LinkedIn, Indeed, Glassdoor, Greenhouse, Lever, Generic")
-        with st.expander("Board Configuration", expanded=False):
-            st.markdown("""
-            **Auto-detection** based on URL:
-            - `linkedin.com` → LinkedIn selectors
-            - `indeed.com` → Indeed selectors
-            - `glassdoor.com` → Glassdoor selectors
-            - `greenhouse.io` → Greenhouse selectors
-            - `lever.co` → Lever selectors
-            - Other → Generic auto-detect
-            """)
-
-        st.subheader(":file_folder: Google Sheets")
-        scraper_creds = st.file_uploader("Upload Google OAuth JSON", type=["json"], key="scraper_creds")
-        if scraper_creds:
-            st.session_state["_scraper_creds"] = scraper_creds.getvalue().decode()
-
-    # Parse URLs
-    urls = []
-    for line in urls_text.replace(",", "\n").split("\n"):
-        u = line.strip()
-        if u and u.startswith("http"):
-            urls.append(u)
-
-    if urls:
-        st.info(f":link: **{len(urls)} URLs** ready to scrape")
-
-    if st.button(":rocket: Scrape All & Push to Sheets", type="primary", key="btn_scrape",
-                 disabled=not urls):
-        if not st.session_state.get("_scraper_creds"):
-            st.warning(":warning: Upload Google OAuth credentials JSON first.")
-        else:
-            # Connect Google Sheets
-            with st.spinner("Connecting to Google Sheets..."):
-                service = get_google_service(st.session_state["_scraper_creds"])
-                if not service:
-                    st.error("Google auth failed. Check credentials.")
-                    st.stop()
-                sheet_id = create_scraper_sheet(service)
-                if sheet_id:
-                    st.success(f"Sheet ready: https://docs.google.com/spreadsheets/d/{sheet_id}")
-
-            # Progress tracking
-            progress_bar = st.progress(0, text="Starting scrape...")
-            status_container = st.empty()
-            results_display = st.container()
-
-            scraped_results = []
-            stats = {"success": 0, "not_found": 0, "blocked": 0, "error": 0, "skipped": 0}
-
-            def progress_callback(current, total, status):
-                pct = current / total
-                progress_bar.progress(pct, text=f"Scraping {current}/{total}... ({status})")
-                stats[status] = stats.get(status, 0) + 1
-
-            # Run batch scrape
-            scraped_results = scrape_batch(urls, progress_callback)
-
-            # Push to Google Sheets
-            if scraped_results:
-                with st.spinner("Pushing to Google Sheets..."):
-                    success_count = sum(1 for r in scraped_results if r["status"] == "success")
-                    pushed = push_batch_to_sheet(service, sheet_id, scraped_results)
-                    st.success(f":white_check_mark: {pushed} rows pushed to Google Sheets")
-
-            # Display results
-            st.markdown("---")
-            st.subheader(":bar_chart: Results Summary")
-
-            col_s1, col_s2, col_s3, col_s4 = st.columns(4)
-            success_count = sum(1 for r in scraped_results if r["status"] == "success")
-            fail_count = len(scraped_results) - success_count
-
-            with col_s1:
-                st.metric(":white_check_mark: Success", success_count)
-            with col_s2:
-                st.metric(":x: Failed", fail_count)
-            with col_s3:
-                st.metric(":link: Total URLs", len(scraped_results))
-            with col_s4:
-                st.metric(":file_folder: Sheet ID", sheet_id[:8] + "..." if sheet_id else "N/A")
-
-            # Detailed results table
-            st.subheader(":page_facing_up: Detailed Results")
-            table_data = []
-            for r in scraped_results:
-                table_data.append({
-                    "Status": r["status"],
-                    "Job Title": r["title"][:60] if r["title"] else "N/A",
-                    "Company": r["company"][:40] if r["company"] else "N/A",
-                    "Board": r.get("board", "?"),
-                    "Error": r.get("error", "")[:50]
-                })
-
-            import pandas as pd
-            df = pd.DataFrame(table_data)
-            st.dataframe(df, use_container_width=True, hide_index=True)
-
-            # Download CSV
-            csv = df.to_csv(index=False)
-            st.download_button(":floppy_disk: Download CSV", csv, "scraped_jds.csv", "text/csv",
-                              use_container_width=True)
-
-            # Save to local output folder
-            run_folder = create_run_folder("Bulk_Scraper")
-            save_run_file(csv, "scraped_jds.csv", run_folder)
-            import json
-            save_run_file(json.dumps(scraped_results, indent=2, ensure_ascii=False),
-                         "scraped_results.json", run_folder)
-
-    elif not urls and urls_text.strip():
-        st.warning(":warning: No valid URLs found. URLs must start with http:// or https://")
-
-
 est_step = 0.05 if DUMMY_MODE else 30  # seconds per step
 est_total = est_step * 12
 est_min = est_total / 60
@@ -2256,7 +2101,7 @@ st.caption(f":hourglass_flowing_sand: **Estimated time**: ~{est_min:.0f} min ({e
 st.markdown("---")
 col_f1, col_f2, col_f3 = st.columns(3)
 with col_f1:
-    st.caption(":white_check_mark: **Ready**: All 16 tools live")
+    st.caption(":white_check_mark: **Ready**: All 15 tools live")
 with col_f2:
     if DUMMY_MODE:
         st.caption(":test_tube: **Mode**: DUMMY (add API keys to `.env`)")
