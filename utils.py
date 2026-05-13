@@ -224,6 +224,137 @@ def _set_heading_font(heading, font_name='Calibri'):
     for run in heading.runs:
         run.font.name = font_name
 
+# ── CV DOCX Template Generator (matches Sarangi CV format) ──
+def generate_docx_cv_template(cv_data):
+    """Generate a CV .docx matching the Sarangi template format exactly."""
+    doc = Document()
+
+    # Margins: match template (1.143" left/right, 0.914" top/bottom)
+    for section in doc.sections:
+        section.top_margin = Inches(0.914)
+        section.bottom_margin = Inches(0.914)
+        section.left_margin = Inches(1.143)
+        section.right_margin = Inches(1.143)
+
+    # ── 1. NAME (Heading 1) ──
+    h = doc.add_heading(cv_data.get("name", ""), level=1)
+    _set_heading_font(h, 'Calibri')
+
+    # ── 2. CONTACT (First Paragraph style, bold labels) ──
+    contact = cv_data.get("contact", {})
+    contact_parts = []
+    if contact.get("location"): contact_parts.append(("Location: ", contact["location"]))
+    if contact.get("phone"): contact_parts.append(("Phone: ", contact["phone"]))
+    if contact.get("email"): contact_parts.append(("Email: ", contact["email"]))
+    if contact.get("linkedin"): contact_parts.append(("LinkedIn: ", contact["linkedin"]))
+    if contact.get("github"): contact_parts.append(("GitHub: ", contact["github"]))
+    if contact.get("scholar"): contact_parts.append(("Google Scholar: ", contact["scholar"]))
+
+    p_contact = doc.add_paragraph()
+    p_contact.style = doc.styles['Normal']
+    for i, (label, value) in enumerate(contact_parts):
+        if i > 0:
+            p_contact.add_run(" | ")
+        run_label = p_contact.add_run(label)
+        run_label.bold = True
+        run_label.font.name = 'Calibri'
+        run_label.font.size = Pt(10)
+        run_value = p_contact.add_run(value)
+        run_value.font.name = 'Calibri'
+        run_value.font.size = Pt(10)
+    p_contact.paragraph_format.space_after = Pt(4)
+
+    # ── Helper: add section ──
+    def add_heading2(text):
+        h2 = doc.add_heading(text, level=2)
+        _set_heading_font(h2, 'Calibri')
+        h2.paragraph_format.space_before = Pt(10)
+
+    def add_heading3(text):
+        h3 = doc.add_heading(text, level=3)
+        _set_heading_font(h3, 'Calibri')
+        h3.paragraph_format.space_before = Pt(6)
+        h3.paragraph_format.space_after = Pt(2)
+
+    def add_body(text, bold=False):
+        p = doc.add_paragraph()
+        run = p.add_run(text)
+        run.font.name = 'Calibri'
+        run.font.size = Pt(10)
+        run.bold = bold
+        p.paragraph_format.space_after = Pt(2)
+        p.paragraph_format.space_before = Pt(0)
+        return p
+
+    def add_bullet(text, bold_prefix=""):
+        p = doc.add_paragraph()
+        p.paragraph_format.space_after = Pt(1)
+        p.paragraph_format.space_before = Pt(0)
+        p.paragraph_format.left_indent = Inches(0.25)
+        p.paragraph_format.line_spacing = 1.0
+        if bold_prefix:
+            run_b = p.add_run(bold_prefix + " ")
+            run_b.bold = True
+            run_b.font.name = 'Calibri'
+            run_b.font.size = Pt(10)
+        run = p.add_run(text)
+        run.font.name = 'Calibri'
+        run.font.size = Pt(10)
+        return p
+
+    # ── 3. PROFESSIONAL SUMMARY ──
+    add_heading2("Professional Summary")
+    add_body(cv_data.get("summary", ""))
+
+    # ── 4. TECHNICAL SKILLS ──
+    add_heading2("Technical Skills")
+    for skill_cat in cv_data.get("skills", []):
+        add_heading3(skill_cat.get("category", ""))
+        add_body(skill_cat.get("items", ""))
+
+    # ── 5. WORK EXPERIENCE ──
+    add_heading2("Work Experience")
+    for exp in cv_data.get("experience", []):
+        add_heading3(exp.get("title", ""))
+        company_line = f"{exp.get('company', '')} | {exp.get('location', '')} | {exp.get('dates', '')}"
+        add_body(company_line, bold=True)
+
+        if exp.get("project_name"):
+            add_body(exp["project_name"])
+
+        for bullet in exp.get("highlights", []):
+            add_bullet(bullet)
+
+        if exp.get("technologies"):
+            add_body("Technologies: " + exp["technologies"], bold=True)
+
+    # ── 6. PUBLICATIONS ──
+    pubs = cv_data.get("publications", [])
+    if pubs:
+        add_heading2("Journal Publications")
+        for pub in pubs:
+            add_bullet(pub)
+
+    # ── 7. EDUCATION ──
+    edu = cv_data.get("education", [])
+    if edu:
+        add_heading2("Education")
+        for e in edu:
+            line = f"{e.get('degree', '')}, {e.get('school', '')}, {e.get('year', '')}"
+            add_bullet(line, bold_prefix=e.get('degree', ''))
+
+    # ── 8. CERTIFICATIONS ──
+    certs = cv_data.get("certifications", [])
+    if certs:
+        add_heading2("Certifications")
+        for cert in certs:
+            add_bullet(cert.get("title", ""), bold_prefix=cert.get("title", ""))
+
+    buf = BytesIO()
+    doc.save(buf)
+    buf.seek(0)
+    return buf
+
 # ── PDF Generation ──
 def generate_pdf(text, title="Document"):
     """Convert text to PDF. Handles special characters and long lines."""
@@ -366,9 +497,8 @@ def estimate_cost(input_chars, output_tokens):
     return in_tokens, cost
 
 # ── Run Folder & Save ──
-def get_job_folder(jd_text=""):
-    """Get or create a job-specific folder with timestamp. Cached per session."""
-    # Check if we already have a job folder for this session
+def get_job_folder(jd_text="", company_name=""):
+    """Get or create a job-specific folder: CompanyName_YYYY-MM-DD. Cached per session."""
     try:
         existing = st.session_state.get("_job_folder")
         if existing and os.path.exists(existing):
@@ -376,21 +506,23 @@ def get_job_folder(jd_text=""):
     except Exception:
         pass
 
-    if jd_text:
+    # Use company name if provided, else extract from JD first line
+    if company_name and company_name.strip():
+        folder_name = re.sub(r'[^a-zA-Z0-9_-]', '_', company_name.strip())[:40].strip('_')
+    elif jd_text:
         first_line = jd_text.split('\n')[0].strip()
         for prefix in ['Job Description:', 'Job Title:', 'Position:', 'Role:', 'About the role', 'About this role']:
             if first_line.lower().startswith(prefix.lower()):
                 first_line = first_line[len(prefix):].strip()
-        job_name = re.sub(r'[^a-zA-Z0-9_-]', '_', first_line)[:40].strip('_')
+        folder_name = re.sub(r'[^a-zA-Z0-9_-]', '_', first_line)[:40].strip('_')
     else:
-        job_name = "Untitled_Job"
+        folder_name = "Untitled_Job"
 
-    ts = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    folder_name = f"{job_name}_{ts}"
-    base_dir = os.path.join(os.getcwd(), "outputs", folder_name)
+    ts = datetime.now().strftime("%Y-%m-%d")
+    folder_name_full = f"{folder_name}_{ts}"
+    base_dir = os.path.join(os.getcwd(), "outputs", folder_name_full)
     os.makedirs(base_dir, exist_ok=True)
 
-    # Cache in session so all runs go to same folder
     try:
         st.session_state["_job_folder"] = base_dir
     except Exception:
@@ -401,13 +533,14 @@ def get_job_folder(jd_text=""):
 def create_run_folder(label=""):
     """Create a named sub-folder inside the job-specific parent folder."""
     safe = re.sub(r'[^a-zA-Z0-9_-]', '_', label.strip())[:40] if label.strip() else "output"
-    # Get job folder (with timestamp, cached per session)
     jd_text = ""
+    company = ""
     try:
         jd_text = st.session_state.get("shared_jd", "")
+        company = st.session_state.get("_company_name", "")
     except Exception:
         pass
-    base_dir = get_job_folder(jd_text)
+    base_dir = get_job_folder(jd_text, company)
     run_dir = os.path.join(base_dir, safe)
     os.makedirs(run_dir, exist_ok=True)
     return run_dir

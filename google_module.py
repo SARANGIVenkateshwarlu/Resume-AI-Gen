@@ -47,6 +47,25 @@ def google_auth(credentials_json):
     except Exception as e:
         st.error(f"Google auth error: {e}")
         return None
+
+def get_or_create_sheet(service, sheet_name="ResumeAI_JobTracker"):
+    """Create a new sheet for job tracking."""
+    try:
+        spreadsheet = service.spreadsheets().create(body={
+            'properties': {'title': sheet_name}
+        }).execute()
+        sheet_id = spreadsheet['spreadsheetId']
+
+        headers = [['Job Title', 'Company', 'Application Date', 'Status', 'Cold Email Sent',
+                     'LinkedIn HR Contact', 'Notes', 'Result', 'JD Link', 'Last Updated']]
+        service.spreadsheets().values().update(
+            spreadsheetId=sheet_id, range='A1:J1',
+            valueInputOption='RAW', body={'values': headers}
+        ).execute()
+        return sheet_id
+    except Exception as e:
+        st.error(f"Error creating sheet: {e}")
+        return None
 def get_or_create_sheet(service, sheet_name="ResumeAI_JobTracker"):
     """Get existing sheet by name, or create a new one."""
     try:

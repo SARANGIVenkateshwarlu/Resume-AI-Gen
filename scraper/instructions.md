@@ -27,7 +27,13 @@ pip install beautifulsoup4 requests
 3. Create **OAuth 2.0 Client ID** (Desktop application type)
 4. Download the JSON credentials file
 
-### 3. Use in the Web App
+### 3. Run Standalone
+```bash
+cd scraper
+streamlit run "Bulk JD Scrape.py"
+```
+
+### 4. Use in Main Web App
 1. Launch the app: `streamlit run main_dashboard.py`
 2. Select **"Bulk JD Scraper"** from the sidebar
 3. Paste job URLs (one per line)

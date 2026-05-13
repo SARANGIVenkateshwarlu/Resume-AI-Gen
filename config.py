@@ -53,7 +53,7 @@ TOKEN_BUDGETS = {
     "interview_q": 1500,
     "star_builder": 2000,
     "recruiter_review": 1000,
-    "full_package": 2000,
+    "full_package": 5000,
     "resume_checker": 800,
     "career_coach": 1000,
     "json_cv_mapper": 1500,
@@ -78,12 +78,28 @@ CANDIDATE_RULES = """
 The candidate holds a PhD and has 4 years of industry experience — highly qualified for senior-level roles.
 
 When rewriting or tailoring resume/CV/cover letter content:
-- PRESERVE 60% of the original experience text verbatim. Keep core facts and achievements intact.
-- Adjust up to 40% of wording for ATS alignment (rephrase for JD keywords, stronger action verbs, role-relevant emphasis).
-- CAPSTONE / RESEARCH PROJECTS: up to 60% of content may be adapted to align with JD keywords and requirements.
+- PRESERVE 10% of the original experience text (keep core facts like dates, titles, company names intact).
+- ADJUST 90% of wording for ATS alignment — aggressively rephrase for JD keywords, strong action verbs, and role-relevant emphasis.
+- CAPSTONE / RESEARCH PROJECTS: up to 90% of content may be rewritten to align with JD keywords and requirements.
 - NEVER invent new projects, company names, job titles, or metrics.
 - NEVER add fake achievements — use [ADD METRIC] placeholders where numbers are unavailable.
-- The goal is ATS alignment while keeping the candidate's real experience intact.
+- The goal is maximum ATS alignment while keeping factual accuracy (dates, titles, companies).
+
+CRITICAL — Cross-Document Consistency Rules:
+- Cover Letter MUST reference the SAME experience, roles, projects, and metrics that appear in the CV.
+- Skills and achievements mentioned in the Cover Letter MUST be present in the CV — no mismatched claims.
+- Maintain a cohesive narrative flow: the Cover Letter tells the STORY, the CV provides the EVIDENCE.
+- Job titles, dates, and company names MUST match exactly between CV and Cover Letter.
+- If a metric appears in the Cover Letter (e.g., "reduced deployment time by 40%"), it MUST also appear in the CV.
+- The CV and Cover Letter together form ONE unified application — they must feel like they were written for the same person, for the same job.
+
+TWO-STAGE GENERATION — Cover Letter & CV:
+- Stage 1 (Step 2 CV Tailor + Step 4 Cover Letter): Generate INITIAL DRAFTS. These are work-in-progress versions.
+- Stage 2 (Step 11 Full Package): Generate the FINAL REFINED VERSION. Use the Stage 1 drafts as input reference.
+  The Full Package output is MORE ACCURATE, MORE POLISHED, and BETTER ALIGNED with JD requirements.
+- The Full Package Cover Letter and CV Summary must REMAIN CONSISTENT with Stage 1 drafts — same facts, same person.
+- If Stage 1 drafts contain errors or gaps, CORRECT them in Stage 2 while preserving factual accuracy.
+- Format in Stage 2 (Full Package) is the definitive version — use it for final submission.
 """
 
 # ── Google Sheets Scopes ──
@@ -91,6 +107,14 @@ GOOGLE_SCOPES = ['https://www.googleapis.com/auth/spreadsheets']
 
 # ── User Identity ──
 USERNAME = os.getenv("USERNAME", "USER").upper()
+
+# ── File & Folder Naming Convention ──
+# Output folder: outputs/CompanyName_YYYY-MM-DD/
+#   Example: outputs/GenseTech_2026-05-11/
+# Cover Letter: Cover_letter_{JobTitle}_{USERNAME}.{ext}
+#   Example: Cover_letter_Data_Engineer_SARANGI.md
+# CV/Resume: CV_{JobTitle}_{USERNAME}.{ext}
+#   Example: CV_Data_Engineer_SARANGI.docx
 
 def get_job_title(jd_text=""):
     """Extract a clean job title from JD text."""

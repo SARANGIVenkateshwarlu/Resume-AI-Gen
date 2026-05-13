@@ -8,9 +8,10 @@ from PIL import Image
 
 from config import PROVIDER_CONFIG, TOKEN_BUDGETS, STEP_NAMES, CANDIDATE_RULES, INPUT_COST_PER_1M, OUTPUT_COST_PER_1M, GOOGLE_SCOPES, USERNAME, get_job_title
 from dummy_data import DUMMY_PREFIX, DUMMY_JD_DECODER, DUMMY_CV_TAILOR, DUMMY_BULLETS, DUMMY_COVER_LETTER, DUMMY_ROLE_FIT, DUMMY_ATS, DUMMY_MATCHER, DUMMY_INTERVIEW_Q, DUMMY_STAR, DUMMY_RECRUITER, DUMMY_FULL_PACKAGE, DUMMY_GENERIC
-from utils import extract_resume_text, generate_docx, generate_docx_cover_letter, generate_docx_cv_template, generate_pdf, estimate_tokens, estimate_cost, create_run_folder, save_run_file, show_folder_summary, cl_filename, cv_filename, is_valid_resume_text
-import json as _json
+from utils import extract_resume_text, generate_docx, generate_docx_cover_letter, generate_pdf, estimate_tokens, estimate_cost, create_run_folder, save_run_file, show_folder_summary, cl_filename, cv_filename, is_valid_resume_text
 from google_module import google_auth, get_or_create_sheet, add_job_application, get_all_applications, check_duplicate
+from scraper.scraper import scrape_batch
+from scraper.sheet_handler import get_google_service, push_batch_to_sheet, create_scraper_sheet
 from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
 
 SCOPES = GOOGLE_SCOPES
@@ -22,8 +23,11 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-logo = Image.open("logo.png")
-st.sidebar.image(logo, width=80)
+try:
+    logo = Image.open("logo.png")
+    st.sidebar.image(logo, width=80)
+except Exception:
+    pass
 st.sidebar.markdown("**Resume Genie**")
 
 ALL_KEYS = {}
@@ -202,6 +206,7 @@ def get_llm_with_tokens(max_tokens):
     provider_name = st.session_state.get("provider", "")
     model_name = st.session_state.get("model", "")
     api_key = st.session_state.get("api_key", "")
+    api_key = st.session_state.get("api_key", "")
 
     config = PROVIDER_CONFIG[provider_name]
     pkg = config["pkg"]
@@ -304,6 +309,7 @@ tool = st.sidebar.radio(
         "12. Job Tracker",
         "Career Coach Chat",
         "JSON CV Mapper",
+        "Bulk JD Scraper",
     ],
     index=0,
     horizontal=False
@@ -377,8 +383,9 @@ if tool == "0. AUTO-PILOT (Run All Steps)":
                  use_container_width=True):
         cv_text = extract_resume_text(cv_file)
         st.session_state.shared_resume_text = cv_text
-        if company and company.strip():
-            st.session_state["_company_name"] = company.strip()
+        if not is_valid_resume_text(cv_text):
+            st.error(":warning: Could not extract text from CV. Try uploading as .md, .txt, or .typ format.")
+            st.stop()
         run_folder = create_run_folder(f"AutoPilot_{re.sub(r'[^a-zA-Z0-9_-]','_',jd_text[:40])}")
         all_results = {}
         all_saved = []
@@ -425,9 +432,13 @@ Rows: Core Responsibilities, Required Skills, Nice-to-Have Skills, ATS Keywords,
 
         # ── Step 2: CV Tailor ──
         r2 = run_step(2, "cv_tailor", lambda: f"""{CANDIDATE_RULES}
-Output a JSON CV for this job matching this EXACT schema:
-{{"name":"Full Name","contact":{{"location":"...","email":"...","linkedin":"..."}},"summary":"2-3 sentences","skills":[{{"category":"Cat","items":"skills"}}],"experience":[{{"title":"Role","company":"Co","location":"City","dates":"Y-Y","project_name":"Project","highlights":["bullet"],"technologies":"tools"}}],"publications":["..."],"education":[{{"degree":"...","school":"...","year":"..."}}],"certifications":[{{"title":"...","details":"..."}}]}}
-Keep 10% original (dates/titles/companies), adjust 90% for JD keywords. Output ONLY valid JSON.
+Rewrite this FULL CV for the job. DO NOT invent facts. Keep 10% original, adjust 90% for JD keywords.
+IMPORTANT: Output the COMPLETE CV - include ALL experience roles, ALL bullet points, skills, education, and contact info. Do NOT truncate.
+- Rewrite summary to align with JD keywords
+- Reorder bullets so JD-matching content appears first
+- Rephrase using strong action verbs (Led, Built, Delivered, Architected)
+- Add Key Qualifications section at top
+- Use [ADD METRIC] where numbers unavailable
 Job: {jd_text}
 CV: {cv_text}""", "CV Tailor")
         all_results["Step 2 - Tailored CV"] = r2
@@ -450,13 +461,11 @@ Show: Original -> Improved. Use [ADD METRIC] where numbers missing.""", "Bullet 
         # ── Step 4: Cover Letter ──
         cl_prompt = f"""{CANDIDATE_RULES}
 Improve and tailor this cover letter draft for the job. 300-450 words. Do not invent facts.
-Ensure all experience, roles, and metrics match the CV exactly. Cover Letter and CV must be consistent.
 End with: Sincerely,\\nDr. Venkateshwarlu Sarangi (Ph.D)\\nCityU & HKUST, HK\\nContact: +851-5316757\\nDate: [today]
 Job: {jd_text}
 Draft: {cl_draft_text}
 Background: {cv_text[:2000]}""" if cl_draft_text.strip() else f"""{CANDIDATE_RULES}
 Write a 300-450 word cover letter for this job using the resume background.
-Ensure all experience, roles, and metrics match the CV exactly. Cover Letter and CV must be consistent.
 End with: Sincerely,\\nDr. Venkateshwarlu Sarangi (Ph.D)\\nCityU & HKUST, HK\\nContact: +851-5316757\\nDate: [today]
 Job: {jd_text}
 Background: {cv_text[:2000]}"""
@@ -518,23 +527,12 @@ Cover Letter: {r4}""", "Recruiter Review")
         fn10 = save_run_file(r10, "step10_recruiter_review.md", run_folder)
         all_saved.append(os.path.basename(fn10))
 
-        # ── Step 11: Full Package (FINAL refined version) ──
+        # ── Step 11: Full Package ──
         r11 = run_step(11, "full_package", lambda: f"""{CANDIDATE_RULES}
-You are generating the FINAL REFINED application package (Stage 2). This is the definitive, submission-ready version. Use the earlier drafts below as reference — correct any gaps, improve polish, but preserve ALL factual consistency.
-
-Generate ALL sections:
-1. CV SUMMARY (3-4 lines, JD-aligned)
-2. KEY SKILLS (12-15 comma-separated, JD-matched)
-3. COVER LETTER (320-350 words exactly, refined from draft, end with signature block)
-4. INTERVIEW QUESTIONS (5 technical + 3 behavioral + 2 culture)
-5. LINKEDIN OUTREACH DM (3-4 sentences)
-6. FOLLOW-UP EMAIL (1 week after application)
-7. SALARY NEGOTIATION TIPS (3-4 tips)
-
-Draft Cover Letter (from Stage 1): {r4}
-
+Assemble complete application package: 1.CV Summary 2.Key Skills 3.Cover Letter 4.Interview Questions 5.LinkedIn DM 6.Follow-up Email.
 Job: {jd_text}
-Candidate Background: {cv_text}""", "Full Package")
+Candidate: {cv_text}
+Cover Letter: {r4}""", "Full Package")
         all_results["Step 11 - Full Package"] = r11
         fn11 = save_run_file(r11, "step11_full_package.md", run_folder)
         all_saved.append(os.path.basename(fn11))
@@ -897,9 +895,6 @@ elif tool == "4. Cover Letter":
                     "  CityU & HKUST, HK\n"
                     "  Contact: +851-5316757\n"
                     "  Date: [current date]\n\n"
-                    "- IMPORTANT: Every experience, role, project, and metric you mention MUST exactly match the CV. "
-                    "No mismatch between cover letter claims and CV content.\n"
-                    "- The cover letter tells the story — the CV provides the evidence. They must flow as one cohesive application.\n\n"
                     "Output in clean markdown format."
                 )
 
@@ -982,39 +977,33 @@ elif tool == "2. CV Tailor":
             st.warning("Please paste a job description.")
         elif not st.session_state.shared_resume_text:
             st.warning("Please upload your resume.")
+        elif not is_valid_resume_text(st.session_state.shared_resume_text):
+            st.error(":warning: Could not extract text from this PDF. Try uploading as .md, .txt, or .typ format.")
+            st.info("Scanned/image-based PDFs cannot be read. Use a text-based format instead.")
         else:
             with st.spinner("Tailoring your CV..."):
                 st.session_state.current_tool_key = "cv_tailor"
 
                 prompt = (
                     f"{CANDIDATE_RULES}\n\n"
-                    "You are an expert CV writer and career coach. Output a STRUCTURED JSON object "
-                    "that can be rendered into a professional CV template. The JSON must follow this EXACT schema:\n\n"
-                    "{\n"
-                    '  "name": "Full Name with Ph.D",\n'
-                    '  "contact": {"location": "...", "phone": "...", "email": "...", "linkedin": "...", "github": "...", "scholar": "..."},\n'
-                    '  "summary": "2-3 sentence professional summary aligned with JD",\n'
-                    '  "skills": [\n'
-                    '    {"category": "Machine Learning & Data Science", "items": "comma-separated skills"},\n'
-                    '    {"category": "LLM & GenAI", "items": "comma-separated skills"},\n'
-                    '    {"category": "MLOps & Infrastructure", "items": "..."},\n'
-                    '    {"category": "Cloud Platforms", "items": "..."},\n'
-                    '    {"category": "Development & Tooling", "items": "..."}\n'
-                    '  ],\n'
-                    '  "experience": [\n'
-                    '    {"title": "Job Title", "company": "Company", "location": "City", "dates": "Month Year - Month Year",\n'
-                    '     "project_name": "Optional Project Title",\n'
-                    '     "highlights": ["bullet 1", "bullet 2", ...],\n'
-                    '     "technologies": "Python, PyTorch, AWS"}\n'
-                    '  ],\n'
-                    '  "publications": ["Author, Title, Venue, Year", ...],\n'
-                    '  "education": [{"degree": "Ph.D in ...", "school": "University", "year": "Year"}],\n'
-                    '  "certifications": [{"title": "Cert Name", "details": "Issuer | Date"}]\n'
-                    "}\n\n"
-                    "Tailor ALL content to the JD below. Output ONLY valid JSON — no markdown, no explanation.\n"
-                    "Preserve 10% original (dates/titles/companies), adjust 90% for JD keywords.\n\n"
+                    "You are an expert CV writer and career coach. Tailor the following "
+                    "resume/CV to match the job description below. PRESERVE the candidate's "
+                    "real experience -- only adjust wording for relevance and impact.\n\n"
                     f"Job Description:\n{job_description}\n\n"
-                    f"Resume:\n{st.session_state.shared_resume_text}"
+                    f"Resume:\n{st.session_state.shared_resume_text}\n\n"
+                    "Instructions:\n"
+                    "1. Rewrite the professional summary to align with JD keywords (use exact phrases from JD)\n"
+                    "2. Reorder experience bullets so JD-matching content appears first\n"
+                    "3. Rephrase bullets to use strong action verbs and include JD keywords naturally\n"
+                    "4. Update the skills section -- prioritize JD-matching skills, then add related skills\n"
+                    "5. Add a \"Key Qualifications\" or \"Core Competencies\" section at the top\n"
+                    "6. Keep 10% original content — aggressively adjust 90% for ATS keywords and JD alignment\n"
+                    "7. Use strong action verbs (Led, Built, Delivered, Architected, Optimized, etc.)\n"
+                    "8. Add [ADD METRIC] placeholders where specific numbers are unavailable\n"
+                    "9. NEVER invent new projects, company names, job titles, or metrics\n"
+                    "10. IMPORTANT: Output the COMPLETE and FULL CV -- include ALL experience roles, "
+                    "ALL bullet points, skills, education, and contact info. Do NOT truncate any section.\n\n"
+                    "Output the full tailored CV in clean markdown format with clear section headings."
                 )
 
                 full_text = ""
@@ -1026,46 +1015,39 @@ elif tool == "2. CV Tailor":
 
                 run_folder = create_run_folder("CV_Tailor")
                 job_title = get_job_title(job_description)
-
-                # Try to parse LLM output as JSON for template rendering
-                cv_json = None
-                try:
-                    clean = full_text.strip()
-                    if clean.startswith("```"):
-                        clean = re.sub(r'^```\w*\n?', '', clean)
-                        clean = re.sub(r'\n?```$', '', clean)
-                    cv_json = _json.loads(clean)
-                except Exception:
-                    pass
-
-                # Save markdown
                 save_run_file(full_text, cv_filename("md", job_title), run_folder)
-
-                # Generate template-based DOCX if JSON parsed, else fallback
-                if cv_json:
-                    docx_buf = generate_docx_cv_template(cv_json)
-                else:
-                    docx_buf = generate_docx(full_text, "CV Tailor")
+                docx_buf = generate_docx(full_text, "CV Tailor")
                 save_run_file(docx_buf, cv_filename("docx", job_title), run_folder)
-
                 pdf_buf = generate_pdf(full_text, "CV Tailor")
                 save_run_file(pdf_buf, cv_filename("pdf", job_title), run_folder)
                 show_folder_summary(run_folder, [
-                    cv_filename("md", job_title),
-                    cv_filename("docx", job_title),
-                    cv_filename("pdf", job_title)
+                    "cv_tailor.md",
+                    "cv_tailor.docx",
+                    "cv_tailor.pdf"
                 ])
 
                 col_dl1, col_dl2, col_dl3 = st.columns(3)
                 with col_dl1:
-                    st.download_button(":floppy_disk: Download .md", full_text,
-                                       cv_filename("md", job_title), key="dl_cv_md")
+                    st.download_button(
+                        ":floppy_disk: Download .md",
+                        full_text,
+                        "cv_tailor.md",
+                        key="dl_cv_md"
+                    )
                 with col_dl2:
-                    st.download_button(":floppy_disk: Download .docx", docx_buf,
-                                       cv_filename("docx", job_title), key="dl_cv_docx")
+                    st.download_button(
+                        ":floppy_disk: Download .docx",
+                        docx_buf,
+                        "cv_tailor.docx",
+                        key="dl_cv_docx"
+                    )
                 with col_dl3:
-                    st.download_button(":floppy_disk: Download .pdf", pdf_buf,
-                                       cv_filename("pdf", job_title), key="dl_cv_pdf")
+                    st.download_button(
+                        ":floppy_disk: Download .pdf",
+                        pdf_buf,
+                        "cv_tailor.pdf",
+                        key="dl_cv_pdf"
+                    )
 
                 mark_step_done(2)
 
@@ -1729,22 +1711,21 @@ elif tool == "11. Full Package":
 
                 prompt = (
                     f"{CANDIDATE_RULES}\n\n"
-                    "You are generating the STAGE 2 FINAL REFINED application package. "
-                    "This is the definitive, submission-ready version — more accurate and polished than earlier drafts. "
-                    "Correct any gaps from earlier CV/cover letter drafts, preserve factual consistency.\n\n"
+                    "You are an AI career assistant. Generate a COMPLETE application "
+                    "package for the following job.\n\n"
                     f"Job Description:\n{job_description}\n\n"
                     f"Resume:\n{st.session_state.shared_resume_text}\n\n"
-                    "Generate ALL sections:\n\n"
+                    "Generate ALL of the following sections:\n\n"
                     "1. **CV SUMMARY** -- 3-4 line professional summary tailored to JD\n"
-                    "2. **KEY SKILLS** -- 12-15 JD-aligned skills, comma-separated\n"
-                    "3. **COVER LETTER** -- 320-350 words refined cover letter with signature block\n"
-                    "4. **INTERVIEW QUESTIONS** -- 5 technical + 3 behavioral + 2 culture fit\n"
-                    "5. **LINKEDIN OUTREACH DM** -- 3-4 sentences for HR/recruiter\n"
-                    "6. **FOLLOW-UP EMAIL** -- template for 1 week after application\n"
-                    "7. **SALARY NEGOTIATION TIPS** -- 3-4 tips\n"
-                    "8. **PORTFOLIO HIGHLIGHTS** -- 3 projects with JD context\n\n"
-                    "Output in comprehensive markdown. Make every section detailed and immediately usable. "
-                    "This is the FINAL version — ensure maximum quality and JD alignment."
+                    "2. **KEY SKILLS** -- comma-separated list of 12-15 JD-aligned skills\n"
+                    "3. **COVER LETTER** -- 300-400 words tailored cover letter\n"
+                    "4. **PREDICTED INTERVIEW QUESTIONS** -- 5 technical + 3 behavioral + 2 culture fit\n"
+                    "5. **LINKEDIN OUTREACH DM** -- short message (3-4 sentences) to send to HR/recruiter\n"
+                    "6. **FOLLOW-UP EMAIL** -- email template for 1 week after application\n"
+                    "7. **SALARY NEGOTIATION TIPS** -- 3-4 tips based on role/industry/level\n"
+                    "8. **PORTFOLIO/PROJECT HIGHLIGHTS** -- 3 projects from resume to emphasize with JD context\n\n"
+                    "Output in comprehensive markdown format with clear headings. "
+                    "Make every section detailed and immediately usable."
                 )
 
                 full_text = ""
@@ -1802,15 +1783,21 @@ elif tool == "12. Job Tracker":
         st.markdown("""
         1. Create a Google Cloud project
         2. Enable Google Sheets API
-        3. Create a Service Account
+        3. Create credentials (Service Account or OAuth Client ID)
         4. Download the JSON key
-        5. Share your sheet with the service account email
+        5. For Service Account: share your sheet with the service account email
         """)
 
         creds_file = st.file_uploader(
-            "Upload Google Service Account JSON",
+            "Upload Google Credentials JSON",
             type=["json"],
             key="gsheets_creds"
+        )
+
+        existing_sheet_id = st.text_input(
+            "Or enter existing Sheet ID (optional)",
+            placeholder="1a2B3c4D5e... from sheet URL",
+            key="gs_existing_sheet"
         )
 
         if creds_file and st.button(":link: Connect to Google Sheets", key="btn_connect_gs"):
@@ -1819,11 +1806,15 @@ elif tool == "12. Job Tracker":
                     credentials_json = creds_file.read().decode("utf-8")
                     service = google_auth(credentials_json)
                     if service:
-                        sheet_id = get_or_create_sheet(service)
+                        if existing_sheet_id.strip():
+                            sheet_id = existing_sheet_id.strip()
+                            st.success(f":white_check_mark: Connected to existing sheet: `{sheet_id}`")
+                        else:
+                            sheet_id = get_or_create_sheet(service)
+                            st.success(f":white_check_mark: New sheet created: `{sheet_id}`")
                         st.session_state.gsheet_service = service
                         st.session_state.gsheet_id = sheet_id
-                        st.success(f":white_check_mark: Connected! Sheet ID: `{sheet_id}`")
-                        st.info("Share this sheet with your service account email for viewing.")
+                        st.info(f"Open: https://docs.google.com/spreadsheets/d/{sheet_id}")
                 except Exception as e:
                     st.error(f"Connection failed: {e}")
 
@@ -1873,11 +1864,8 @@ elif tool == "12. Job Tracker":
                         }
                         if add_job_application(service, sheet_id, data):
                             st.success(f":white_check_mark: `{job_title}` at `{company}` added!")
+                            st.balloons()
                             mark_step_done(12)
-                            # Auto-refresh table
-                            df = get_all_applications(service, sheet_id)
-                            st.session_state.gsheet_df = df
-                            st.rerun()
         else:
             st.info(":arrow_left: Upload a service account JSON and click Connect first.")
 
@@ -1926,7 +1914,10 @@ elif tool == "Career Coach Chat":
     if uploaded_file:
         resume_text = extract_resume_text(uploaded_file)
         st.session_state.shared_resume_text = resume_text
-        st.success(f":white_check_mark: Resume loaded ({len(resume_text):,} chars)")
+        if is_valid_resume_text(resume_text):
+            st.success(f":white_check_mark: Resume loaded ({len(resume_text):,} chars)")
+        else:
+            st.error(":warning: Could not extract text. Try .md, .txt, or .typ format.")
 
     if not st.session_state.shared_resume_text:
         st.warning(":point_up: Upload your resume to start chatting!")
@@ -2128,6 +2119,136 @@ Output ONLY the JSON object. No markdown fences."""
         st.info(":point_up: Paste your raw CV text above and click Generate to create structured JSON.")
 
 
+elif tool == "Bulk JD Scraper":
+    st.header(":globe_with_meridians: Bulk JD Scraper — Phase 5")
+    st.markdown("Paste multiple job description URLs. The scraper extracts Job Title, Company, and JD text from each, then pushes results to Google Sheets.")
+    st.markdown("---")
+
+    col1, col2 = st.columns([2, 1])
+    with col1:
+        st.subheader(":link: Job Description URLs")
+        urls_text = st.text_area(
+            "Paste URLs (one per line or comma-separated)",
+            height=200,
+            key="scraper_urls",
+            placeholder="https://www.linkedin.com/jobs/view/12345\nhttps://www.indeed.com/viewjob?jk=abc123\nhttps://boards.greenhouse.io/company/jobs/7890"
+        )
+    with col2:
+        st.subheader(":gear: Settings")
+        st.caption("Supported boards: LinkedIn, Indeed, Glassdoor, Greenhouse, Lever, Generic")
+        with st.expander("Board Configuration", expanded=False):
+            st.markdown("""
+            **Auto-detection** based on URL:
+            - `linkedin.com` → LinkedIn selectors
+            - `indeed.com` → Indeed selectors
+            - `glassdoor.com` → Glassdoor selectors
+            - `greenhouse.io` → Greenhouse selectors
+            - `lever.co` → Lever selectors
+            - Other → Generic auto-detect
+            """)
+
+        st.subheader(":file_folder: Google Sheets")
+        scraper_creds = st.file_uploader("Upload Google OAuth JSON", type=["json"], key="scraper_creds")
+        if scraper_creds:
+            st.session_state["_scraper_creds"] = scraper_creds.getvalue().decode()
+
+    # Parse URLs
+    urls = []
+    for line in urls_text.replace(",", "\n").split("\n"):
+        u = line.strip()
+        if u and u.startswith("http"):
+            urls.append(u)
+
+    if urls:
+        st.info(f":link: **{len(urls)} URLs** ready to scrape")
+
+    if st.button(":rocket: Scrape All & Push to Sheets", type="primary", key="btn_scrape",
+                 disabled=not urls):
+        if not st.session_state.get("_scraper_creds"):
+            st.warning(":warning: Upload Google OAuth credentials JSON first.")
+        else:
+            # Connect Google Sheets
+            with st.spinner("Connecting to Google Sheets..."):
+                service = get_google_service(st.session_state["_scraper_creds"])
+                if not service:
+                    st.error("Google auth failed. Check credentials.")
+                    st.stop()
+                sheet_id = create_scraper_sheet(service)
+                if sheet_id:
+                    st.success(f"Sheet ready: https://docs.google.com/spreadsheets/d/{sheet_id}")
+
+            # Progress tracking
+            progress_bar = st.progress(0, text="Starting scrape...")
+            status_container = st.empty()
+            results_display = st.container()
+
+            scraped_results = []
+            stats = {"success": 0, "not_found": 0, "blocked": 0, "error": 0, "skipped": 0}
+
+            def progress_callback(current, total, status):
+                pct = current / total
+                progress_bar.progress(pct, text=f"Scraping {current}/{total}... ({status})")
+                stats[status] = stats.get(status, 0) + 1
+
+            # Run batch scrape
+            scraped_results = scrape_batch(urls, progress_callback)
+
+            # Push to Google Sheets
+            if scraped_results:
+                with st.spinner("Pushing to Google Sheets..."):
+                    success_count = sum(1 for r in scraped_results if r["status"] == "success")
+                    pushed = push_batch_to_sheet(service, sheet_id, scraped_results)
+                    st.success(f":white_check_mark: {pushed} rows pushed to Google Sheets")
+
+            # Display results
+            st.markdown("---")
+            st.subheader(":bar_chart: Results Summary")
+
+            col_s1, col_s2, col_s3, col_s4 = st.columns(4)
+            success_count = sum(1 for r in scraped_results if r["status"] == "success")
+            fail_count = len(scraped_results) - success_count
+
+            with col_s1:
+                st.metric(":white_check_mark: Success", success_count)
+            with col_s2:
+                st.metric(":x: Failed", fail_count)
+            with col_s3:
+                st.metric(":link: Total URLs", len(scraped_results))
+            with col_s4:
+                st.metric(":file_folder: Sheet ID", sheet_id[:8] + "..." if sheet_id else "N/A")
+
+            # Detailed results table
+            st.subheader(":page_facing_up: Detailed Results")
+            table_data = []
+            for r in scraped_results:
+                table_data.append({
+                    "Status": r["status"],
+                    "Job Title": r["title"][:60] if r["title"] else "N/A",
+                    "Company": r["company"][:40] if r["company"] else "N/A",
+                    "Board": r.get("board", "?"),
+                    "Error": r.get("error", "")[:50]
+                })
+
+            import pandas as pd
+            df = pd.DataFrame(table_data)
+            st.dataframe(df, use_container_width=True, hide_index=True)
+
+            # Download CSV
+            csv = df.to_csv(index=False)
+            st.download_button(":floppy_disk: Download CSV", csv, "scraped_jds.csv", "text/csv",
+                              use_container_width=True)
+
+            # Save to local output folder
+            run_folder = create_run_folder("Bulk_Scraper")
+            save_run_file(csv, "scraped_jds.csv", run_folder)
+            import json
+            save_run_file(json.dumps(scraped_results, indent=2, ensure_ascii=False),
+                         "scraped_results.json", run_folder)
+
+    elif not urls and urls_text.strip():
+        st.warning(":warning: No valid URLs found. URLs must start with http:// or https://")
+
+
 est_step = 0.05 if DUMMY_MODE else 30  # seconds per step
 est_total = est_step * 12
 est_min = est_total / 60
@@ -2136,7 +2257,7 @@ st.caption(f":hourglass_flowing_sand: **Estimated time**: ~{est_min:.0f} min ({e
 st.markdown("---")
 col_f1, col_f2, col_f3 = st.columns(3)
 with col_f1:
-    st.caption(":white_check_mark: **Ready**: All 15 tools live")
+    st.caption(":white_check_mark: **Ready**: All 16 tools live")
 with col_f2:
     if DUMMY_MODE:
         st.caption(":test_tube: **Mode**: DUMMY (add API keys to `.env`)")

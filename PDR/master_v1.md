@@ -112,9 +112,9 @@ outputs/
 
 ### Key Rules (injected into all prompts)
 - Candidate: PhD + 4 years experience — highly qualified
-- Preserve 60% of original experience text verbatim
-- Adjust up to 40% for ATS alignment and JD keywords
-- Capstone/Research projects: up to 60% flexibility
+- Keep 10% original content (dates, titles, companies)
+- Adjust 90% for ATS keywords and JD requirements
+- Capstone/Research projects: up to 90% flexibility
 - NEVER invent facts — use [ADD METRIC] placeholders
 
 ---
